@@ -186,12 +186,30 @@ function getCameraVideoPosition( // eslint-disable-line max-params
 }
 
 /**
+ * 获取格式化的时间戳字符串
+ * @returns {string} 格式化的时间戳，格式：YYYYMMDD_HHmmss_SSS
+ */
+function getFormattedTimestamp() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const seconds = String(now.getSeconds()).padStart(2, '0');
+    const milliseconds = String(now.getMilliseconds()).padStart(3, '0');
+    
+    return `${year}${month}${day}_${hours}${minutes}${seconds}_${milliseconds}`;
+}
+
+/**
  * 捕获视频帧并保存为图片
  * @param {HTMLVideoElement} videoElement - 要捕获的视频元素
  * @param {string} userId - 用户ID
+ * @param {JitsiTrack} track - 视频轨道
  * @returns {Function} 返回一个用于停止捕获的函数
  */
-function captureFrames(videoElement, userId) {
+function captureFrames(videoElement, userId, track) {
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d');
     let frameCount = 0;
@@ -200,11 +218,26 @@ function captureFrames(videoElement, userId) {
     let isCapturing = true;
 
     /**
+     * 检查视频流是否可用
+     * @returns {boolean}
+     */
+    function isStreamActive() {
+        return track && !track.isMuted() && track.isActive() && videoElement && videoElement.videoWidth > 0 && videoElement.videoHeight > 0;
+    }
+
+    /**
      * 捕获单帧
      * @param {number} timestamp - 当前时间戳
      */
     function captureFrame(timestamp) {
         if (!isCapturing) {
+            return;
+        }
+
+        // 检查视频流状态
+        if (!isStreamActive()) {
+            logger.debug('Video stream is not active, stopping capture');
+            isCapturing = false;
             return;
         }
 
@@ -216,11 +249,6 @@ function captureFrames(videoElement, userId) {
 
         if (elapsed >= frameInterval) {
             try {
-                // 检查视频是否有效
-                if (!videoElement || !videoElement.videoWidth || !videoElement.videoHeight) {
-                    return;
-                }
-
                 // 设置 canvas 尺寸以匹配视频
                 canvas.width = videoElement.videoWidth;
                 canvas.height = videoElement.videoHeight;
@@ -238,7 +266,7 @@ function captureFrames(videoElement, userId) {
                         const url = URL.createObjectURL(blob);
                         const a = document.createElement('a');
                         a.href = url;
-                        a.download = `frame-${userId}-${frameCount}.jpg`;
+                        a.download = `screenshot_${getFormattedTimestamp()}.jpg`;
                         a.click();
                         URL.revokeObjectURL(url);
                         frameCount++;
@@ -259,6 +287,21 @@ function captureFrames(videoElement, userId) {
         }
     }
 
+    // 监听视频轨道状态变化
+    if (track) {
+        track.on('trackMuteChanged', () => {
+            if (track.isMuted()) {
+                logger.debug('Video track muted, stopping capture');
+                isCapturing = false;
+            }
+        });
+
+        track.on('trackEnded', () => {
+            logger.debug('Video track ended, stopping capture');
+            isCapturing = false;
+        });
+    }
+
     // 开始帧捕获
     requestAnimationFrame(captureFrame);
 
@@ -272,11 +315,12 @@ function captureFrames(videoElement, userId) {
  * 录制视频流
  * @param {MediaStream} stream - 要录制的媒体流
  * @param {string} userId - 用户ID
+ * @param {JitsiTrack} track - 视频轨道
  * @returns {MediaRecorder|null} 返回 MediaRecorder 实例或 null
  */
-function recordStream(stream, userId) {
-    if (!MediaRecorder || !stream) {
-        logger.error('MediaRecorder not supported or stream is invalid');
+function recordStream(stream, userId, track) {
+    if (!MediaRecorder || !stream || !track || track.isMuted()) {
+        logger.error('MediaRecorder not supported or stream/track is invalid/muted');
         return null;
     }
 
@@ -305,7 +349,7 @@ function recordStream(stream, userId) {
                 // 创建下载链接
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `recording-${userId}-${Date.now()}.webm`;
+                a.download = `recording_${getFormattedTimestamp()}.webm`;
                 a.click();
                 
                 // 清理
@@ -314,6 +358,21 @@ function recordStream(stream, userId) {
                 logger.error('Error saving recording:', error);
             }
         };
+
+        // 监听视频轨道状态变化
+        track.on('trackMuteChanged', () => {
+            if (track.isMuted() && recorder.state !== 'inactive') {
+                logger.debug('Video track muted, stopping recording');
+                recorder.stop();
+            }
+        });
+
+        track.on('trackEnded', () => {
+            if (recorder.state !== 'inactive') {
+                logger.debug('Video track ended, stopping recording');
+                recorder.stop();
+            }
+        });
 
         // 开始录制
         recorder.start();
@@ -697,6 +756,8 @@ export class VideoContainer extends LargeContainer {
                     id: stream.getId(),
                     type: stream.getType(),
                     videoType: videoType,
+                    isMuted: stream.isMuted(),
+                    isActive: stream.isActive(),
                     tracks: mediaStream.getTracks().map(t => ({
                         kind: t.kind,
                         label: t.label,
@@ -705,7 +766,7 @@ export class VideoContainer extends LargeContainer {
                 })}`);
 
                 // 开始录制
-                const recorder = recordStream(mediaStream, userID);
+                const recorder = recordStream(mediaStream, userID, stream);
                 if (recorder) {
                     this.recorders.set(userID, recorder);
                 }
@@ -714,7 +775,7 @@ export class VideoContainer extends LargeContainer {
                 if (this.video) {
                     this.video.onloadedmetadata = () => {
                         try {
-                            const frameCapturer = captureFrames(this.video, userID);
+                            const frameCapturer = captureFrames(this.video, userID, stream);
                             this.frameCapturers.set(userID, frameCapturer);
                         } catch (error) {
                             logger.error('Error starting frame capture:', error);
