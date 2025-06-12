@@ -12,7 +12,6 @@ import { setLargeVideoDimensions } from '../../../react/features/large-video/act
 import { LargeVideoBackground, ORIENTATION } from '../../../react/features/large-video/components/LargeVideoBackground';
 import { LAYOUTS } from '../../../react/features/video-layout/constants';
 import { getCurrentLayout } from '../../../react/features/video-layout/functions.any';
-/* eslint-enable no-unused-vars */
 import UIUtil from '../util/UIUtil';
 
 import Filmstrip from './Filmstrip';
@@ -25,6 +24,12 @@ export const VIDEO_CONTAINER_TYPE = 'camera';
 const FADE_DURATION_MS = 300;
 
 const logger = Logger.getLogger(__filename);
+
+// 添加截图相关的常量
+const SCREENSHOT_INTERVAL = 200; // 200ms = 5次/秒
+
+// 添加 MediaRecorder 辅助函数
+const MediaRecorder = window.MediaRecorder;
 
 /**
  * List of container events that we are going to process for the large video.
@@ -181,6 +186,145 @@ function getCameraVideoPosition( // eslint-disable-line max-params
 }
 
 /**
+ * 捕获视频帧并保存为图片
+ * @param {HTMLVideoElement} videoElement - 要捕获的视频元素
+ * @param {string} userId - 用户ID
+ * @returns {Function} 返回一个用于停止捕获的函数
+ */
+function captureFrames(videoElement, userId) {
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    let frameCount = 0;
+    let lastFrameTime = 0;
+    const frameInterval = 1000 / 5; // 5fps = 200ms per frame
+    let isCapturing = true;
+
+    /**
+     * 捕获单帧
+     * @param {number} timestamp - 当前时间戳
+     */
+    function captureFrame(timestamp) {
+        if (!isCapturing) {
+            return;
+        }
+
+        if (!lastFrameTime) {
+            lastFrameTime = timestamp;
+        }
+
+        const elapsed = timestamp - lastFrameTime;
+
+        if (elapsed >= frameInterval) {
+            try {
+                // 检查视频是否有效
+                if (!videoElement || !videoElement.videoWidth || !videoElement.videoHeight) {
+                    return;
+                }
+
+                // 设置 canvas 尺寸以匹配视频
+                canvas.width = videoElement.videoWidth;
+                canvas.height = videoElement.videoHeight;
+
+                // 绘制当前帧
+                context.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+
+                // 转换为 blob 并保存
+                canvas.toBlob(blob => {
+                    if (!blob) {
+                        return;
+                    }
+
+                    try {
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `frame-${userId}-${frameCount}.jpg`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                        frameCount++;
+                    } catch (error) {
+                        logger.error('Error saving frame:', error);
+                    }
+                }, 'image/jpeg', 0.95);
+
+                lastFrameTime = timestamp;
+            } catch (error) {
+                logger.error('Error capturing frame:', error);
+            }
+        }
+
+        // 如果仍在捕获中，继续捕获帧
+        if (isCapturing) {
+            requestAnimationFrame(captureFrame);
+        }
+    }
+
+    // 开始帧捕获
+    requestAnimationFrame(captureFrame);
+
+    // 返回停止捕获的函数
+    return () => {
+        isCapturing = false;
+    };
+}
+
+/**
+ * 录制视频流
+ * @param {MediaStream} stream - 要录制的媒体流
+ * @param {string} userId - 用户ID
+ * @returns {MediaRecorder|null} 返回 MediaRecorder 实例或 null
+ */
+function recordStream(stream, userId) {
+    if (!MediaRecorder || !stream) {
+        logger.error('MediaRecorder not supported or stream is invalid');
+        return null;
+    }
+
+    try {
+        const recorder = new MediaRecorder(stream, {
+            mimeType: 'video/webm;codecs=vp8,opus'
+        });
+
+        const chunks = [];
+        recorder.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) {
+                chunks.push(e.data);
+            }
+        };
+
+        recorder.onstop = () => {
+            try {
+                if (chunks.length === 0) {
+                    logger.warn('No video data recorded');
+                    return;
+                }
+
+                const blob = new Blob(chunks, { type: 'video/webm' });
+                const url = URL.createObjectURL(blob);
+                
+                // 创建下载链接
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `recording-${userId}-${Date.now()}.webm`;
+                a.click();
+                
+                // 清理
+                URL.revokeObjectURL(url);
+            } catch (error) {
+                logger.error('Error saving recording:', error);
+            }
+        };
+
+        // 开始录制
+        recorder.start();
+        return recorder;
+    } catch (error) {
+        logger.error('Error creating MediaRecorder:', error);
+        return null;
+    }
+}
+
+/**
  * Container for user video.
  */
 export class VideoContainer extends LargeContainer {
@@ -210,6 +354,8 @@ export class VideoContainer extends LargeContainer {
         this.videoType = null;
         this.localFlipX = true;
         this.resizeContainer = resizeContainer;
+        this.recorders = new Map();
+        this.frameCapturers = new Map();
 
         /**
          * Whether the background should fit the height of the container
@@ -270,6 +416,11 @@ export class VideoContainer extends LargeContainer {
 
         this.video.onresize = this._onResize.bind(this);
         this._play = this._play.bind(this);
+
+        // 添加截图相关的属性
+        this._screenshotInterval = null;
+        this._screenshotCanvas = document.createElement('canvas');
+        this._screenshotContext = this._screenshotCanvas.getContext('2d');
     }
 
     /**
@@ -504,9 +655,6 @@ export class VideoContainer extends LargeContainer {
         if (this.userId === userID && this.stream === stream && !stream?.forceStreamToReattach) {
             logger.debug(`SetStream on the large video for user ${userID} ignored: the stream is not changed!`);
 
-            // Handles the use case for the remote participants when the
-            // videoType is received with delay after turning on/off the
-            // desktop sharing.
             if (this.videoType !== videoType) {
                 this.videoType = videoType;
                 this.resizeContainer();
@@ -515,15 +663,73 @@ export class VideoContainer extends LargeContainer {
             return;
         }
 
+        // 停止旧流的录制和帧捕获
+        if (this.stream && this.video) {
+            try {
+                if (this.recorders.has(this.userId)) {
+                    const recorder = this.recorders.get(this.userId);
+                    if (recorder && recorder.state !== 'inactive') {
+                        recorder.stop();
+                    }
+                    this.recorders.delete(this.userId);
+                }
+                if (this.frameCapturers.has(this.userId)) {
+                    const stopCapture = this.frameCapturers.get(this.userId);
+                    if (typeof stopCapture === 'function') {
+                        stopCapture();
+                    }
+                    this.frameCapturers.delete(this.userId);
+                }
+                this.stream.detach(this.video);
+            } catch (error) {
+                logger.error('Error cleaning up old stream:', error);
+            }
+        }
+
+        // 为新流添加日志和录制
+        if (stream) {
+            try {
+                logger.info(`Intercepted video stream for user ${userID}`);
+                const mediaStream = stream.getOriginalStream();
+                
+                // 记录流详情
+                logger.info(`Stream details: ${JSON.stringify({
+                    id: stream.getId(),
+                    type: stream.getType(),
+                    videoType: videoType,
+                    tracks: mediaStream.getTracks().map(t => ({
+                        kind: t.kind,
+                        label: t.label,
+                        readyState: t.readyState
+                    }))
+                })}`);
+
+                // 开始录制
+                const recorder = recordStream(mediaStream, userID);
+                if (recorder) {
+                    this.recorders.set(userID, recorder);
+                }
+
+                // 当视频准备好时开始帧捕获
+                if (this.video) {
+                    this.video.onloadedmetadata = () => {
+                        try {
+                            const frameCapturer = captureFrames(this.video, userID);
+                            this.frameCapturers.set(userID, frameCapturer);
+                        } catch (error) {
+                            logger.error('Error starting frame capture:', error);
+                        }
+                    };
+                }
+            } catch (error) {
+                logger.error('Error setting up new stream:', error);
+            }
+        }
+
         this.userId = userID;
 
         if (stream?.forceStreamToReattach) {
             delete stream.forceStreamToReattach;
-        }
-
-        // detach old stream
-        if (this.stream && this.video) {
-            this.stream.detach(this.video);
         }
 
         this.stream = stream;
@@ -531,7 +737,6 @@ export class VideoContainer extends LargeContainer {
 
         if (!stream) {
             logger.debug('SetStream on the large video is called without a stream argument!');
-
             return;
         }
 
@@ -541,7 +746,6 @@ export class VideoContainer extends LargeContainer {
                 logger.error(`Attaching the remote track ${stream} to large video has failed with `, error);
             });
 
-            // Ensure large video gets play() called on it when a new stream is attached to it.
             this._play();
 
             const flipX = stream.isLocal() && this.localFlipX && !this.isScreenSharing();
@@ -672,5 +876,13 @@ export class VideoContainer extends LargeContainer {
                 videoTrack = { this.stream } />,
             document.getElementById('largeVideoBackgroundContainer')
         );
+    }
+
+    /**
+     * 组件销毁时清理资源
+     */
+    destroy() {
+        this._stopScreenshotInterval();
+        super.destroy();
     }
 }

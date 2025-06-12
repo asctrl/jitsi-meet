@@ -17,6 +17,7 @@ import { CHAT_SIZE, ChatTabs, SMALL_WIDTH_THRESHOLD } from '../../constants';
 import { IChatProps as AbstractProps } from '../../types';
 import { IconMessage, IconInfo, IconSubtitles, IconShareDoc } from '../../../base/icons/svg';
 
+import AutoMessageSender from './AutoMessageSender';
 import ChatHeader from './ChatHeader';
 import ChatInput from './ChatInput';
 import ClosedCaptionsTab from './ClosedCaptionsTab';
@@ -510,6 +511,7 @@ const Chat = ({
             className = { classes.container }
             id = 'sideToolbarContainer'
             onKeyDown = { onEscClick } >
+            <AutoMessageSender />
             <ChatHeader
                 className = { cx('chat-header', classes.chatHeader) }
                 isCCTabEnabled = { _isCCTabEnabled }
