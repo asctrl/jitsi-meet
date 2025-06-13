@@ -1,0 +1,6 @@
+{
+    "messageApi": {
+        "url": "http://localhost:8000/get_message",
+        "pollingInterval": 5000
+    }
+} 
