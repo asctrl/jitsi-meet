@@ -12,7 +12,7 @@ import { setLargeVideoDimensions } from '../../../react/features/large-video/act
 import { LargeVideoBackground, ORIENTATION } from '../../../react/features/large-video/components/LargeVideoBackground';
 import { LAYOUTS } from '../../../react/features/video-layout/constants';
 import { getCurrentLayout } from '../../../react/features/video-layout/functions.any';
-import videoConfig from '../../../react/features/video-layout/config/videoConfig.json';
+import appConfig from '../../../react/features/config/appConfig.json';
 import UIUtil from '../util/UIUtil';
 
 import Filmstrip from './Filmstrip';
@@ -214,7 +214,7 @@ async function uploadImage(blob, filename) {
     formData.append('files', blob, filename);
 
     try {
-        const response = await fetch(videoConfig.api.parseUrl, {
+        const response = await fetch(appConfig.api.parseUrl, {
             method: 'POST',
             body: formData
         });
@@ -245,7 +245,7 @@ function captureFrames(videoElement, userId, track) {
     const context = canvas.getContext('2d');
     let frameCount = 0;
     let lastFrameTime = 0;
-    const frameInterval = videoConfig.screenshot.interval;
+    const frameInterval = appConfig.video.screenshot.interval;
     let isCapturing = true;
 
     /**
@@ -313,7 +313,7 @@ function captureFrames(videoElement, userId, track) {
                     } catch (error) {
                         logger.error('处理图片失败:', error);
                     }
-                }, videoConfig.screenshot.format, videoConfig.screenshot.quality);
+                }, appConfig.video.screenshot.format, appConfig.video.screenshot.quality);
 
                 lastFrameTime = timestamp;
             } catch (error) {

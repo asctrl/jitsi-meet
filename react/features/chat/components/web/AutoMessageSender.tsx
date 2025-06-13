@@ -5,12 +5,12 @@ import { IReduxState } from '../../../app/types';
 import { getLocalParticipant } from '../../../base/participants/functions';
 import { sendMessage } from '../../actions.web';
 import Logger from '@jitsi/logger';
-import autoMessageConfig from '../../config/autoMessageConfig.json';
+import appConfig from '../../../config/appConfig.json';
 
 const logger = Logger.getLogger(__filename);
 
-const MESSAGE_API_URL = autoMessageConfig.messageApi.url;
-const POLLING_INTERVAL = autoMessageConfig.messageApi.pollingInterval;
+const MESSAGE_API_URL = appConfig.api.messageUrl;
+const POLLING_INTERVAL = appConfig.message.pollingInterval;
 
 /**
  * 从API获取消息

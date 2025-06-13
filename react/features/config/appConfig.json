@@ -1,0 +1,16 @@
+{
+    "api": {
+        "messageUrl": "http://localhost:8000/get_message",
+        "parseUrl": "http://localhost:8000/parse"
+    },
+    "message": {
+        "pollingInterval": 5000
+    },
+    "video": {
+        "screenshot": {
+            "interval": 200,
+            "format": "image/jpeg",
+            "quality": 0.95
+        }
+    }
+} 
