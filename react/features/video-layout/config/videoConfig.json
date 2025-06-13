@@ -1,0 +1,10 @@
+{
+    "api": {
+        "parseUrl": "http://localhost:8000/parse"
+    },
+    "screenshot": {
+        "interval": 200,
+        "format": "image/jpeg",
+        "quality": 0.95
+    }
+} 

@@ -12,6 +12,7 @@ import { setLargeVideoDimensions } from '../../../react/features/large-video/act
 import { LargeVideoBackground, ORIENTATION } from '../../../react/features/large-video/components/LargeVideoBackground';
 import { LAYOUTS } from '../../../react/features/video-layout/constants';
 import { getCurrentLayout } from '../../../react/features/video-layout/functions.any';
+import videoConfig from '../../../react/features/video-layout/config/videoConfig.json';
 import UIUtil from '../util/UIUtil';
 
 import Filmstrip from './Filmstrip';
@@ -203,6 +204,36 @@ function getFormattedTimestamp() {
 }
 
 /**
+ * 上传图片到服务器
+ * @param {Blob} blob - 图片数据
+ * @param {string} filename - 文件名
+ * @returns {Promise<Object>} 上传结果
+ */
+async function uploadImage(blob, filename) {
+    const formData = new FormData();
+    formData.append('files', blob, filename);
+
+    try {
+        const response = await fetch(videoConfig.api.parseUrl, {
+            method: 'POST',
+            body: formData
+        });
+
+        const result = await response.json();
+        console.group('图片上传结果');
+        console.log('上传文件:', filename);
+        console.log('服务器响应:', result);
+        console.groupEnd();
+
+        return result;
+    } catch (error) {
+        console.error('上传图片失败:', error);
+        logger.error('上传图片失败:', error);
+        throw error;
+    }
+}
+
+/**
  * 捕获视频帧并保存为图片
  * @param {HTMLVideoElement} videoElement - 要捕获的视频元素
  * @param {string} userId - 用户ID
@@ -214,7 +245,7 @@ function captureFrames(videoElement, userId, track) {
     const context = canvas.getContext('2d');
     let frameCount = 0;
     let lastFrameTime = 0;
-    const frameInterval = 1000 / 5; // 5fps = 200ms per frame
+    const frameInterval = videoConfig.screenshot.interval;
     let isCapturing = true;
 
     /**
@@ -234,9 +265,9 @@ function captureFrames(videoElement, userId, track) {
             return;
         }
 
-        // 检查视频流状态
         if (!isStreamActive()) {
             logger.debug('Video stream is not active, stopping capture');
+
             isCapturing = false;
             return;
         }
@@ -249,39 +280,47 @@ function captureFrames(videoElement, userId, track) {
 
         if (elapsed >= frameInterval) {
             try {
-                // 设置 canvas 尺寸以匹配视频
                 canvas.width = videoElement.videoWidth;
                 canvas.height = videoElement.videoHeight;
-
-                // 绘制当前帧
                 context.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
 
-                // 转换为 blob 并保存
-                canvas.toBlob(blob => {
+                canvas.toBlob(async blob => {
                     if (!blob) {
                         return;
                     }
 
                     try {
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = `screenshot_${getFormattedTimestamp()}.jpg`;
-                        a.click();
-                        URL.revokeObjectURL(url);
-                        frameCount++;
+                        const filename = `screenshot_${getFormattedTimestamp()}.jpg`;
+                        
+                        // 上传图片
+                        const uploadResult = await uploadImage(blob, filename);
+                        
+                        if (uploadResult.code === 200) {
+                            logger.info('图片上传成功:', uploadResult.result);
+                            
+                            // 同时保存到本地
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = url;
+                            a.download = filename;
+                            a.click();
+                            URL.revokeObjectURL(url);
+                            
+                            frameCount++;
+                        } else {
+                            logger.warn('图片上传失败:', uploadResult.msg);
+                        }
                     } catch (error) {
-                        logger.error('Error saving frame:', error);
+                        logger.error('处理图片失败:', error);
                     }
-                }, 'image/jpeg', 0.95);
+                }, videoConfig.screenshot.format, videoConfig.screenshot.quality);
 
                 lastFrameTime = timestamp;
             } catch (error) {
-                logger.error('Error capturing frame:', error);
+                logger.error('捕获帧失败:', error);
             }
         }
 
-        // 如果仍在捕获中，继续捕获帧
         if (isCapturing) {
             requestAnimationFrame(captureFrame);
         }
