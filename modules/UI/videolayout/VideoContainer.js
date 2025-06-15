@@ -234,6 +234,43 @@ async function uploadImage(blob, filename) {
 }
 
 /**
+ * 发送视频信息到服务器
+ * @param {string} userId - 用户ID
+ * @param {JitsiTrack} track - 视频轨道
+ * @returns {Promise<Object>} 发送结果
+ */
+async function sendVideoInfo(userId, track) {
+    try {
+        const response = await fetch(appConfig.api.sendVideoUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                userId: userId,
+                trackId: track.getId(),
+                trackType: track.getType(),
+                isActive: track.isActive(),
+                isMuted: track.isMuted(),
+                timestamp: new Date().toISOString()
+            })
+        });
+
+        const result = await response.json();
+        console.group('视频信息发送结果');
+        console.log('用户ID:', userId);
+        console.log('服务器响应:', result);
+        console.groupEnd();
+
+        return result;
+    } catch (error) {
+        console.error('发送视频信息失败:', error);
+        logger.error('发送视频信息失败:', error);
+        throw error;
+    }
+}
+
+/**
  * 捕获视频帧并保存为图片
  * @param {HTMLVideoElement} videoElement - 要捕获的视频元素
  * @param {string} userId - 用户ID
@@ -241,6 +278,26 @@ async function uploadImage(blob, filename) {
  * @returns {Function} 返回一个用于停止捕获的函数
  */
 function captureFrames(videoElement, userId, track) {
+    // 检查是否为demo模式
+    if (appConfig.demo) {
+        console.log('%cDemo模式：跳过截图，发送视频信息', 'color: #2196F3; font-weight: bold');
+        logger.info('Demo模式：跳过截图，发送视频信息');
+        
+        // 发送视频信息
+        sendVideoInfo(userId, track).then(result => {
+            if (result.code === 200) {
+                logger.info('视频信息发送成功:', result.result);
+            } else {
+                logger.warn('视频信息发送失败:', result.msg);
+            }
+        }).catch(error => {
+            logger.error('发送视频信息时出错:', error);
+        });
+        
+        // 返回空的停止函数
+        return () => {};
+    }
+
     const canvas = document.createElement('canvas');
     const context = canvas.getContext('2d');
     let frameCount = 0;
@@ -794,7 +851,7 @@ export class VideoContainer extends LargeContainer {
                 logger.info(`Stream details: ${JSON.stringify({
                     id: stream.getId(),
                     type: stream.getType(),
-                    videoType: videoType,
+                    videoType,
                     isMuted: stream.isMuted(),
                     isActive: stream.isActive(),
                     tracks: mediaStream.getTracks().map(t => ({
@@ -810,7 +867,7 @@ export class VideoContainer extends LargeContainer {
                     this.recorders.set(userID, recorder);
                 }
 
-                // 当视频准备好时开始帧捕获
+                // 当视频准备好时开始帧捕获或发送视频信息
                 if (this.video) {
                     this.video.onloadedmetadata = () => {
                         try {

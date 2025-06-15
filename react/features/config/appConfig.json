@@ -1,10 +1,12 @@
 {
+    "demo": true,
     "api": {
         "messageUrl": "http://localhost:8000/get_message",
-        "parseUrl": "http://localhost:8000/parse"
+        "parseUrl": "http://localhost:8000/parse",
+        "sendVideoUrl": "http://localhost:8000/send_videos"
     },
     "message": {
-        "pollingInterval": 5000
+        "pollingInterval": 3000
     },
     "video": {
         "screenshot": {
